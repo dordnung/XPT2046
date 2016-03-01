@@ -4,180 +4,188 @@
 #include "XPT2046.h"
 
 
-inline static void swap(uint16_t &a, uint16_t &b) {
-  uint16_t tmp = a;
-  a = b;
-  b = tmp;
+// Swap variable a with variable b
+inline static void swap(int16_t &a, int16_t &b) {
+	int16_t tmp = a;
+	a = b;
+	b = tmp;
 }
 
-/**********************************************************/
-#if 0
-
-// Bisection-based median; will modify vals array
-static uint16_t fastMedian (uint16_t *vals, uint8_t n) {
-  uint8_t l = 0, r = n;
-
-  while (l < r) {
-    uint16_t pivot = vals[l];  // TODO use middle elt?
-    uint8_t i = l+1, j = r-1;
-    while (i <= j) {
-      while ((i < r) && (vals[i] <= pivot)) {
-        ++i;
-      }
-      while ((j > l) && (vals[j] > pivot)) {
-        --j;
-      }
-      if (i < j) {
-        swap(vals[i], vals[j]);
-      }
-    }
-    swap(vals[l], vals[j]);
-
-    // j is final pivot position
-    if (j == n/2) {
-      return vals[j];
-    } else if (n/2 < j) {
-      r = i;
-    } else { // n/2 > j
-      l = j+1;
-    }
-  }
-}
-
-static uint16_t mean (const uint16_t *vals, uint8_t n) {
-  uint32_t sum = 0;
-  for (uint8_t i = 0;  i < n;  i++) {
-    sum += vals[i];
-  }
-  return (uint16_t)(sum/n);
-}
-
-#endif // 0
-/**********************************************************/
-
-XPT2046::XPT2046 (uint8_t cs_pin, uint8_t irq_pin) 
-: _cs_pin(cs_pin), _irq_pin(irq_pin) {
+XPT2046::XPT2046(uint8_t cs_pin, uint8_t irq_pin)
+	: _cs_pin(cs_pin), _irq_pin(irq_pin), _is_swapped(false) {
 }
 
 void XPT2046::begin(uint16_t width, uint16_t height) {
-  pinMode(_cs_pin, OUTPUT);
-  pinMode(_irq_pin, INPUT_PULLUP);
+	pinMode(_cs_pin, OUTPUT);
+	pinMode(_irq_pin, INPUT_PULLUP);
 
-  _width = width;
-  _height = height;
+	_width = width;
+	_height = height;
 
-  // Default calibration (map 0..ADC_MAX -> 0..width|height)
-  setCalibration(
-    /*vi1=*/((int32_t)CAL_MARGIN) * ADC_MAX / width,
-    /*vj1=*/((int32_t)CAL_MARGIN) * ADC_MAX / height,
-    /*vi2=*/((int32_t)width - CAL_MARGIN) * ADC_MAX / width,
-    /*vj2=*/((int32_t)height - CAL_MARGIN) * ADC_MAX / height
-  );
-  // TODO(?) Use the following empirical calibration instead? -- Does it depend on VCC??
-  // touch.setCalibration(209, 1759, 1775, 273);
+	// Delta x and delta y of the calibration points
+	_cal_dx = _width - 2 * CAL_MARGIN;
+	_cal_dy = _height - 2 * CAL_MARGIN;
 
-  SPI.begin();
+	// Default calibration (map 0..ADC_MAX -> 0..width|height)
+	setCalibration(
+		TS_Point(CAL_MARGIN * ADC_MAX / width, CAL_MARGIN * ADC_MAX / height),
+		TS_Point(width - CAL_MARGIN * ADC_MAX / width, CAL_MARGIN * ADC_MAX / height),
+		TS_Point(CAL_MARGIN * ADC_MAX / width, height - CAL_MARGIN * ADC_MAX / height),
+		TS_Point(width - CAL_MARGIN * ADC_MAX / width, height - CAL_MARGIN * ADC_MAX / height)
+		);
 
-  powerDown();  // Make sure PENIRQ is enabled
+	// TODO(?) Use the following empirical calibration instead? -- Does it depend on VCC??
+	// setCalibration(TS_Point(192, 1728), TS_Point(194, 275), TS_Point(1744, 1707), TS_Point(1744, 288));
+
+	// Start SPI
+	SPI.begin();
+
+	// Make sure PENIRQ is enabled
+	powerDown();
 }
 
-void XPT2046::getCalibrationPoints(uint16_t &x1, uint16_t &y1, uint16_t &x2, uint16_t &y2) {
-  x1 = y1 = CAL_MARGIN;
-  x2 = _width - CAL_MARGIN;
-  y2 = _height - CAL_MARGIN;
+void XPT2046::getCalibrationPoints(TS_Point &point1, TS_Point &point2, TS_Point &point3, TS_Point &point4) {
+	point1 = TS_Point(CAL_MARGIN, CAL_MARGIN);
+	point2 = TS_Point(_width - CAL_MARGIN, CAL_MARGIN);
+	point3 = TS_Point(CAL_MARGIN, _height - CAL_MARGIN);
+	point4 = TS_Point(_width - CAL_MARGIN, _height - CAL_MARGIN);
 }
 
-void XPT2046::setCalibration (uint16_t vi1, uint16_t vj1, uint16_t vi2, uint16_t vj2) {
-  _cal_dx = _width - 2*CAL_MARGIN;
-  _cal_dy = _height - 2*CAL_MARGIN;
+bool XPT2046::setCalibration(TS_Point point1, TS_Point point2, TS_Point point3, TS_Point point4) {
+	_cal_point_1 = point1;
+	_cal_point_2 = point2;
+	_cal_point_3 = point3;
+	_cal_point_4 = point4;
 
-  _cal_vi1 = (int32_t)vi1;
-  _cal_vj1 = (int32_t)vj1;
-  _cal_dvi = (int32_t)vi2 - vi1;
-  _cal_dvj = (int32_t)vj2 - vj1;
+	int16_t delta_x = point2.x - point1.x;
+	int16_t delta_y = point2.y - point1.y;
+
+	// x and y are swapped, if the delta of x is in x direction less then the delta of y
+	if (abs(delta_x) < abs(delta_y)) {
+		delta_x = point3.x - point1.x;
+		delta_y = point3.y - point1.y;
+
+		// x and y are only swapped, if the delta of y is in y direction higher then the delta of x
+		if (abs(delta_x) > abs(delta_y)) {
+			_is_swapped = true;
+		} else {
+			// This can't be possible! Maybe wrong click?
+			return false;
+		}
+	} else {
+		_is_swapped = false;
+	}
+
+	return true;
 }
 
 uint16_t XPT2046::_readLoop(uint8_t ctrl, uint8_t max_samples) const {
-  uint16_t prev = 0xffff, cur = 0xffff;
-  uint8_t i = 0;
-  do {
-    prev = cur;
-    cur = SPI.transfer(0);
-    cur = (cur << 4) | (SPI.transfer(ctrl) >> 4);  // 16 clocks -> 12-bits (zero-padded at end)
-  } while ((prev != cur) && (++i < max_samples));
-//Serial.print("RL i: "); Serial.println(i); Serial.flush();  // DEBUG
-  return cur;
+	uint16_t prev = 0xffff, cur = 0xffff;
+	uint8_t i = 0;
+
+	do {
+		prev = cur;
+		cur = SPI.transfer(0);
+
+		// 16 clocks -> 12-bits (zero-padded at end)
+		cur = (cur << 4) | (SPI.transfer(ctrl) >> 4);
+	} while ((prev != cur) && (++i < max_samples));
+
+	return cur;
 }
 
 // TODO: Caveat - MODE_SER is completely untested!!
-//   Need to measure current draw and see if it even makes sense to keep it as an option
-void XPT2046::getRaw (uint16_t &vi, uint16_t &vj, adc_ref_t mode, uint8_t max_samples) const {
-  // Implementation based on TI Technical Note http://www.ti.com/lit/an/sbaa036/sbaa036.pdf
+//       Need to measure current draw and see if it even makes sense to keep it as an option
+void XPT2046::getRaw(TS_Point &point, adc_ref_t mode, uint8_t max_samples) const {
+	// Implementation based on TI Technical Note http://www.ti.com/lit/an/sbaa036/sbaa036.pdf
+	uint8_t ctrl_lo = ((mode == MODE_DFR) ? CTRL_LO_DFR : CTRL_LO_SER);
 
-  uint8_t ctrl_lo = ((mode == MODE_DFR) ? CTRL_LO_DFR : CTRL_LO_SER);
-  
-  digitalWrite(_cs_pin, LOW);
-  SPI.transfer(CTRL_HI_X | ctrl_lo);  // Send first control byte
-  vi = _readLoop(CTRL_HI_X | ctrl_lo, max_samples);
-  vj = _readLoop(CTRL_HI_Y | ctrl_lo, max_samples);
+	digitalWrite(_cs_pin, LOW);
 
-  if (mode == MODE_DFR) {
-    // Turn off ADC by issuing one more read (throwaway)
-    // This needs to be done, because PD=0b11 (needed for MODE_DFR) will disable PENIRQ
-    SPI.transfer(0);  // Maintain 16-clocks/conversion; _readLoop always ends after issuing a control byte
-    SPI.transfer(CTRL_HI_Y | CTRL_LO_SER);
-  }
-  SPI.transfer16(0);  // Flush last read, just to be sure
-  
-  digitalWrite(_cs_pin, HIGH);
+	// Send first control byte
+	SPI.transfer(CTRL_HI_X | ctrl_lo);
+
+	point.x = _readLoop(CTRL_HI_X | ctrl_lo, max_samples);
+	point.y = _readLoop(CTRL_HI_Y | ctrl_lo, max_samples);
+
+	if (mode == MODE_DFR) {
+		// Turn off ADC by issuing one more read (throwaway)
+		// This needs to be done, because PD=0b11 (needed for MODE_DFR) will disable PENIRQ
+
+		// Maintain 16-clocks/conversion; _readLoop always ends after issuing a control byte
+		SPI.transfer(0);
+		SPI.transfer(CTRL_HI_Y | CTRL_LO_SER);
+	}
+
+	// Flush last read, just to be sure
+	SPI.transfer16(0);
+
+	digitalWrite(_cs_pin, HIGH);
 }
 
-void XPT2046::getPosition (uint16_t &x, uint16_t &y, adc_ref_t mode, uint8_t max_samples) const {
-  if (!isTouching()) {
-    x = y = 0xffff;
-    return;
-  }
+void XPT2046::getPosition(TS_Point &position, adc_ref_t mode, uint8_t max_samples) const {
+	if (!isTouching()) {
+		position.x = position.y = 0xffff;
+		return;
+	}
 
-  uint16_t vi, vj;
-  getRaw(vi, vj, mode, max_samples);
+	// First get raw position
+	TS_Point rawPosition;
+	getRaw(rawPosition, mode, max_samples);
 
-  // Map to (un-rotated) display coordinates
-#if defined(SWAP_AXES) && SWAP_AXES
-  x = (uint16_t)(_cal_dx * (vj - _cal_vj1) / _cal_dvj + CAL_MARGIN);
-  y = (uint16_t)(_cal_dy * (vi - _cal_vi1) / _cal_dvi + CAL_MARGIN);
-#else
-  x = (uint16_t)(_cal_dx * (vi - _cal_vi1) / _cal_dvi + CAL_MARGIN);
-  y = (uint16_t)(_cal_dy * (vj - _cal_vj1) / _cal_dvj + CAL_MARGIN);
-#endif
+	// Calculate x and y
+	if (_is_swapped) {
+		position.x = (int16_t)(CAL_MARGIN + _cal_dx * (rawPosition.y - _cal_point_1.y) / (_cal_point_2.y - _cal_point_1.y));
+		position.y = (int16_t)(CAL_MARGIN + _cal_dy * (rawPosition.x - _cal_point_1.x) / (_cal_point_3.x - _cal_point_1.x));
+	} else {
+		position.x = (int16_t)(CAL_MARGIN + _cal_dx * (rawPosition.x - _cal_point_1.x) / (_cal_point_2.x - _cal_point_1.x));
+		position.y = (int16_t)(CAL_MARGIN + _cal_dy * (rawPosition.y - _cal_point_1.y) / (_cal_point_3.y - _cal_point_1.y));
+	}
 
-  // Transform based on current rotation setting
-  // TODO: Is it worth to do this by tweaking _cal_* values instead?
-  switch (_rot) {  // TODO double-check
-  case ROT90:
-    x = _width - x;
-    swap(x, y);
-    break;
-  case ROT180:
-    x = _width - x;
-    y = _height - y; 
-    break;
-  case ROT270:
-    y = _height - y; 
-    swap(x, y);
-    break;
-  case ROT0:
-  default:
-    // Do nothing
-    break;
-  }
+	// Transform based on current rotation setting
+	switch (_rotation) {
+		case ROT_90:
+			position.x = _width - position.x;
+			swap(position.x, position.y);
+			break;
+		case ROT_180:
+			position.x = _width - position.x;
+			position.y = _height - position.y;
+			break;
+		case ROT_270:
+			position.y = _height - position.y;
+			swap(position.x, position.y);
+			break;
+		case ROT_0:
+		default:
+			// Do nothing
+			break;
+	}
 }
 
 void XPT2046::powerDown() const {
-  digitalWrite(_cs_pin, LOW);
-  // Issue a throw-away read, with power-down enabled (PD{1,0} == 0b00)
-  // Otherwise, ADC is disabled
-  SPI.transfer(CTRL_HI_Y | CTRL_LO_SER);
-  SPI.transfer16(0);  // Flush, just to be sure
-  digitalWrite(_cs_pin, HIGH);
+	digitalWrite(_cs_pin, LOW);
+	// Issue a throw-away read, with power-down enabled (PD{1,0} == 0b00)
+	// Otherwise, ADC is disabled
+	SPI.transfer(CTRL_HI_Y | CTRL_LO_SER);
+	SPI.transfer16(0);  // Flush, just to be sure
+	digitalWrite(_cs_pin, HIGH);
 }
 
+
+TS_Point::TS_Point(void) {
+	x = y = 0;
+}
+
+TS_Point::TS_Point(int16_t x0, int16_t y0) {
+	x = x0;
+	y = y0;
+}
+
+bool TS_Point::operator==(TS_Point p1) {
+	return  ((p1.x == x) && (p1.y == y));
+}
+
+bool TS_Point::operator!=(TS_Point p1) {
+	return  ((p1.x != x) || (p1.y != y));
+}
