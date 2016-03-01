@@ -1,5 +1,5 @@
 # Improved XPT2046 Library
-This is a improved fork of the XPT2046 library by [spapadim](https://github.com/spapadim/XPT2046). It uses four calibration points instead if two for an correct calibration.   
+This is a improved fork of the XPT2046 library by [spapadim](https://github.com/spapadim/XPT2046). It uses four calibration points instead of two for an correct calibration.   
 Also the Adafruit_ILI9341 library is now used for the examples instead of the ucglib.  
 All methods are now documented.
 
