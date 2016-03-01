@@ -33,7 +33,7 @@ static void calibratePoint(TS_Point &point, TS_Point &raw) {
 
 void calibrate() {
 	TS_Point point1, point2, point3, point4, point5;
-	TS_Point raw1, raw2, raw3, raw4;
+	TS_Point raw1, raw2, raw3, raw4, raw5;
 
 	touch.getCalibrationPoints(point1, point2, point3, point4);
 
@@ -48,6 +48,19 @@ void calibrate() {
 
 	touch.setCalibration(raw1, raw2, raw3, raw4);
 
+	// Draw cross for circle
+	TS_Point circlePoint = TS_Point(tft.width() / 4, tft.height() / 3);
+
+	tft.drawFastHLine(circlePoint.x - 8, circlePoint.y, 16, ILI9341_WHITE);
+	tft.drawFastVLine(circlePoint.x, circlePoint.y - 8, 16, ILI9341_WHITE);
+
+	while (!touch.isTouching()) {
+		delay(10);
+	}
+
+	touch.getPosition(point5);
+	tft.drawCircle(point5.x, point5.y, 30, ILI9341_WHITE);
+
 	char buffer[128];
 	snprintf(buffer, sizeof(buffer), "(%d, %d), (%d, %d), (%d, %d), (%d, %d)", raw1.x, raw1.y, raw2.x, raw2.y, raw3.x, raw3.y, raw4.x, raw4.y);
 
@@ -58,13 +71,6 @@ void calibrate() {
 	tft.print(buffer);
 
 	Serial.println(buffer);
-
-	while (!touch.isTouching()) {
-		delay(10);
-	}
-
-	touch.getPosition(point5);
-	tft.drawCircle(point5.x, point5.y, 30, ILI9341_WHITE);
 }
 
 void setup() {
