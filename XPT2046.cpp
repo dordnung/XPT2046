@@ -76,6 +76,31 @@ bool XPT2046::setCalibration(TS_Point point1, TS_Point point2, TS_Point point3, 
 		_is_swapped = false;
 	}
 
+	// Calculate the average of the x and y
+	int16_t average_x_1, average_x_2, average_y_1, average_y_2;
+
+	if (_is_swapped) {
+		average_x_1 = (_cal_point_1.x + _cal_point_2.x) / 2;
+		average_x_2 = (_cal_point_3.x + _cal_point_4.x) / 2;
+		_cal_point_1.x = _cal_point_2.x = average_x_1;
+		_cal_point_3.x = _cal_point_4.x = average_x_2;
+
+		average_y_1 = (_cal_point_1.y + _cal_point_3.y) / 2;
+		average_y_2 = (_cal_point_2.y + _cal_point_4.y) / 2;
+		_cal_point_1.y = _cal_point_3.y = average_y_1;
+		_cal_point_2.y = _cal_point_4.y = average_y_2;
+	} else {
+		average_x_1 = (_cal_point_1.x + _cal_point_3.x) / 2;
+		average_x_2 = (_cal_point_2.x + _cal_point_4.x) / 2;
+		_cal_point_1.x = _cal_point_3.x  = average_x_1;
+		_cal_point_2.x = _cal_point_4.x = average_x_2;
+
+		average_y_1 = (_cal_point_1.y + _cal_point_2.y) / 2;
+		average_y_2 = (_cal_point_3.y + _cal_point_4.y) / 2;
+		_cal_point_1.y = _cal_point_2.y = average_y_1;
+		_cal_point_3.y = _cal_point_4.y = average_y_2;
+	}
+
 	return true;
 }
 
@@ -135,11 +160,11 @@ void XPT2046::getPosition(TS_Point &position, adc_ref_t mode, uint8_t max_sample
 
 	// Calculate x and y
 	if (_is_swapped) {
-		position.x = (int16_t)(CAL_MARGIN + _cal_dx * (rawPosition.y - _cal_point_1.y) / (_cal_point_2.y - _cal_point_1.y));
-		position.y = (int16_t)(CAL_MARGIN + _cal_dy * (rawPosition.x - _cal_point_1.x) / (_cal_point_3.x - _cal_point_1.x));
+		position.x = CAL_MARGIN + _cal_dx * (rawPosition.y - _cal_point_1.y) / (_cal_point_2.y - _cal_point_1.y);
+		position.y = CAL_MARGIN + _cal_dy * (rawPosition.x - _cal_point_1.x) / (_cal_point_3.x - _cal_point_1.x);
 	} else {
-		position.x = (int16_t)(CAL_MARGIN + _cal_dx * (rawPosition.x - _cal_point_1.x) / (_cal_point_2.x - _cal_point_1.x));
-		position.y = (int16_t)(CAL_MARGIN + _cal_dy * (rawPosition.y - _cal_point_1.y) / (_cal_point_3.y - _cal_point_1.y));
+		position.x = CAL_MARGIN + _cal_dx * (rawPosition.x - _cal_point_1.x) / (_cal_point_2.x - _cal_point_1.x);
+		position.y = CAL_MARGIN + _cal_dy * (rawPosition.y - _cal_point_1.y) / (_cal_point_3.y - _cal_point_1.y);
 	}
 
 	// Transform based on current rotation setting

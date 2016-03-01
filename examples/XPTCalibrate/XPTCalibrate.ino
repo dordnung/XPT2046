@@ -23,6 +23,7 @@ static void calibratePoint(TS_Point &point, TS_Point &raw) {
 	while (!touch.isTouching()) {
 		delay(10);
 	}
+
 	touch.getRaw(raw);
 
 	// Erase by overwriting with black
@@ -32,7 +33,7 @@ static void calibratePoint(TS_Point &point, TS_Point &raw) {
 
 void calibrate() {
 	TS_Point point1, point2, point3, point4, point5;
-	TS_Point raw1, raw2, raw3, raw4, raw5;
+	TS_Point raw1, raw2, raw3, raw4;
 
 	touch.getCalibrationPoints(point1, point2, point3, point4);
 
@@ -57,6 +58,13 @@ void calibrate() {
 	tft.print(buffer);
 
 	Serial.println(buffer);
+
+	while (!touch.isTouching()) {
+		delay(10);
+	}
+
+	touch.getPosition(point5);
+	tft.drawCircle(point5.x, point5.y, 30, ILI9341_WHITE);
 }
 
 void setup() {
