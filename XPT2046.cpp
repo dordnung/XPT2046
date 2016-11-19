@@ -4,6 +4,24 @@
 #include "XPT2046.h"
 
 
+// If the SPI library has transaction support, these functions
+// establish settings and protect from interference from other
+// libraries.  Otherwise, they simply do nothing.
+#ifdef SPI_HAS_TRANSACTION
+static inline void spi_begin(void) __attribute__((always_inline));
+static inline void spi_begin(void) {
+	SPI.beginTransaction(SPISettings(2500000, MSBFIRST, SPI_MODE0));
+}
+static inline void spi_end(void) __attribute__((always_inline));
+static inline void spi_end(void) {
+	SPI.endTransaction();
+}
+#else
+#define spi_begin()
+#define spi_end()
+#endif
+
+
 // Swap variable a with variable b
 inline static void swap(int16_t &a, int16_t &b) {
 	int16_t tmp = a;
@@ -39,6 +57,10 @@ void XPT2046::begin(uint16_t width, uint16_t height) {
 
 	// Start SPI
 	SPI.begin();
+	#ifndef SPI_HAS_TRANSACTION
+		SPI.setBitOrder(MSBFIRST);
+		SPI.setDataMode(SPI_MODE0);
+	#endif
 
 	// Make sure PENIRQ is enabled
 	powerDown();
@@ -126,6 +148,8 @@ void XPT2046::getRaw(TS_Point &point, adc_ref_t mode, uint8_t max_samples) const
 	uint8_t ctrl_lo = ((mode == MODE_DFR) ? CTRL_LO_DFR : CTRL_LO_SER);
 
 	digitalWrite(_cs_pin, LOW);
+	
+	spi_begin();
 
 	// Send first control byte
 	SPI.transfer(CTRL_HI_X | ctrl_lo);
@@ -144,6 +168,7 @@ void XPT2046::getRaw(TS_Point &point, adc_ref_t mode, uint8_t max_samples) const
 
 	// Flush last read, just to be sure
 	SPI.transfer16(0);
+	spi_end();
 
 	digitalWrite(_cs_pin, HIGH);
 }
@@ -192,8 +217,10 @@ void XPT2046::powerDown() const {
 	digitalWrite(_cs_pin, LOW);
 	// Issue a throw-away read, with power-down enabled (PD{1,0} == 0b00)
 	// Otherwise, ADC is disabled
+	spi_begin();
 	SPI.transfer(CTRL_HI_Y | CTRL_LO_SER);
 	SPI.transfer16(0);  // Flush, just to be sure
+	spi_end();
 	digitalWrite(_cs_pin, HIGH);
 }
 
